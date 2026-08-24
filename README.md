@@ -73,7 +73,9 @@ I also capped feedback content at 2000 characters (~300 words). That's plenty fo
 
 ### Concrete Example: Correcting the AI
 
-The AI proposed separating system instructions from user content (`systemInstruction` field in the Gemini API) as a prompt injection defense. When I asked whether this actually prevents injection, the honest answer was no — a determined user can still craft input that influences the model's output. The real defense was already in place: Zod schema validation on the output side, which rejects anything that doesn't match the expected structure regardless of what the model returns. We kept the `systemInstruction` split as a minor improvement, but I made sure we weren't treating it as a security boundary.
+The AI's initial design lumped everything onto the Feedback entity — retry count, raw AI responses, failure reasons, analysis results, all as columns on one table. I pushed back on this because it mixes two different concerns: user-facing data (content, status) and internal processing state (AI responses, failure logs). We split it into a separate Analysis entity with a one-to-one relation, so Feedback stays clean and the processing details live where they belong.
+
+From there I caught two more issues in the Analysis design. The AI wanted `retryCount` as a database column, but since our queue is in-memory (`EventEmitter`), that count doesn't survive a restart — persisting it would just be lying about durability. Moved it to the event payload. It also proposed `rawAiResponses: string[]` to store responses from each retry attempt, but since we only retry on HTTP errors (where there's no response body to store), the array would always have at most one entry. Simplified to `rawAiResponse: string | null`.
 
 ### What I Would Improve With More Time
 
