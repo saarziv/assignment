@@ -1,98 +1,82 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Feedback Analysis Service
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A backend service that accepts user feedback and reliably extracts structured insights using an LLM (Gemini 2.5 Flash).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Built with NestJS, TypeScript, SQLite (TypeORM), and Zod.
 
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## Setup
 
 ```bash
-$ npm install
+npm install
+cp .env.example .env  # or create .env with GEMINI_API_KEY
 ```
 
-## Compile and run the project
+## Running
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run dev          # development (watch mode)
+npm run build        # compile
+npm run start:prod   # production
 ```
 
-## Run tests
+## Testing
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm test             # unit tests (7 tests)
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
+To test E2E with mock LLM (no API calls):
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+USE_MOCK_LLM=true npm run dev
+# POST http://localhost:3000/feedback  { "content": "Love the app!" }
+# GET  http://localhost:3000/feedback
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## Architecture
 
-## Resources
+```
+src/
+├── feedback/       # Submission & retrieval (controller, service, entity, DTO)
+├── analysis/       # Async AI pipeline (event-driven, Gemini client, Zod validation)
+└── app.module.ts   # Root module
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+**Flow:** `POST /feedback` → persists with status `RECEIVED` → emits event → `AnalysisService` picks it up asynchronously → calls Gemini → validates JSON with Zod → `DONE` or `FAILED`
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+**Retry logic:** HTTP/network errors trigger exponential backoff via `setTimeout` + event re-emit (non-blocking). Validation failures and safety blocks fail immediately — no retry.
 
-## Support
+**Rate limiter:** Sliding window (5 RPM) in `GeminiService`. When throttled, the request is re-emitted after the cooldown — same pattern as retries, no blocking.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+---
 
-## Stay in touch
+## Guardrail
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+I picked **rate-limiting AI analysis** as the primary guardrail, with a secondary input length cap.
 
-## License
+The Gemini free tier allows only 5 RPM, so rate limiting felt like the most practical choice — without it, a burst of feedback submissions would immediately hit 429 errors and waste retry attempts. The rate limiter uses a sliding window that tracks call timestamps and defers excess requests non-blockingly (same `setTimeout` + re-emit pattern used for retries).
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+I also capped feedback content at 2000 characters (~300 words). That's plenty for real user feedback while keeping token costs predictable and reducing the surface area for prompt injection.
+
+---
+
+## AI Collaboration Log
+
+**Tools used:** Claude Code (terminal), Gemini API (for analysis)
+
+### Example Prompts
+
+1. *"You plan to sleep for the exponential backoff? That blocks the event loop. Use setTimeout with event re-emitting instead."*
+   The AI initially wrote `await sleep(delayMs)` for retry backoff, which would hold up the entire handler. I pushed for a non-blocking approach — schedule a `setTimeout` that re-emits the `feedback.created` event with an incremented attempt count. Same retry behavior, zero blocking.
+
+2. *"The retry count shouldn't be in the database. If the server restarts, that count resets anyway, pass it through the event payload instead."*
+   The AI wanted to persist `retryCount` as a column in the Analysis table. I pointed out this gives a false sense of durability — the in-memory event queue doesn't survive restarts, so the count is inherently transient. We moved it into the event payload instead, which is simpler and more honest about what it guarantees.
+
+### Concrete Example: Correcting the AI
+
+The AI proposed separating system instructions from user content (`systemInstruction` field in the Gemini API) as a prompt injection defense. When I asked whether this actually prevents injection, the honest answer was no — a determined user can still craft input that influences the model's output. The real defense was already in place: Zod schema validation on the output side, which rejects anything that doesn't match the expected structure regardless of what the model returns. We kept the `systemInstruction` split as a minor improvement, but I made sure we weren't treating it as a security boundary.
+
+### What I Would Improve With More Time
+
+- **Persistent job queue:** Replace `EventEmitter` + `setTimeout` with BullMQ/Redis. Right now, if the server restarts mid-analysis, in-flight work and scheduled retries are lost silently.
+- **Idempotency guard:** `getOrCreateAnalysis` partially handles duplicate events, but there's no lock preventing two concurrent handlers from racing on the same feedbackId. A simple advisory lock or unique constraint would fix this.
+- **Observability:** Structured logging with correlation IDs across the pipeline, and metrics for Gemini latency, failure rates by type, and throttle frequency.

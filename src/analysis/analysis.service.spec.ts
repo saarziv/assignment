@@ -1,5 +1,5 @@
 import { AnalysisService } from './analysis.service';
-import { GeminiService } from './gemini.service';
+import { GeminiSafetyBlockError, GeminiRateLimitError } from './gemini.service';
 import { Feedback, FeedbackStatus } from '../feedback/feedback.entity';
 
 const VALID_RESPONSE = JSON.stringify({
@@ -172,6 +172,48 @@ describe('AnalysisService', () => {
     expect(savedAnalysis.analysisResult).toBeTruthy();
     expect(savedAnalysis.rawAiResponse).toBe(VALID_RESPONSE);
     expect(savedAnalysis.failureReasons).toHaveLength(1);
+    expect(feedbackStatusHistory).toContain(FeedbackStatus.DONE);
+  });
+
+  it('should fail immediately on safety block without retry', async () => {
+    mockGeminiService.generateContent.mockRejectedValue(
+      new GeminiSafetyBlockError('SAFETY'),
+    );
+
+    await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 0 });
+
+    expect(feedbackStatusHistory).toContain(FeedbackStatus.FAILED);
+    expect(savedAnalysis.failureReasons).toEqual(
+      expect.arrayContaining([expect.stringContaining('blocked the request')]),
+    );
+    // Should NOT schedule a retry
+    expect(mockEventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it('should re-emit with same attemptCount when rate limited, then succeed', async () => {
+    mockGeminiService.generateContent
+      .mockRejectedValueOnce(new GeminiRateLimitError(5000))
+      .mockResolvedValueOnce(VALID_RESPONSE);
+
+    // Attempt 0 — rate limited
+    await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 0 });
+
+    // Not a failure — failureReasons stays empty
+    expect(savedAnalysis.failureReasons).toHaveLength(0);
+
+    // Re-emitted with SAME attemptCount
+    jest.advanceTimersByTime(5000);
+    expect(mockEventEmitter.emit).toHaveBeenCalledWith('feedback.created', {
+      feedbackId: 'fb-1',
+      attemptCount: 0,
+    });
+
+    // Attempt 0 again — succeeds
+    mockAnalysisRepo.findOneBy.mockResolvedValue(savedAnalysis);
+    await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 0 });
+
+    expect(savedAnalysis.analysisResult).toBeTruthy();
+    expect(savedAnalysis.rawAiResponse).toBe(VALID_RESPONSE);
     expect(feedbackStatusHistory).toContain(FeedbackStatus.DONE);
   });
 });

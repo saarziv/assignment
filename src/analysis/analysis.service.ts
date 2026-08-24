@@ -6,10 +6,10 @@ import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { Feedback, FeedbackStatus } from '../feedback/feedback.entity';
 import { Analysis } from './analysis.entity';
-import { GeminiService } from './gemini.service';
+import { GeminiService, GeminiSafetyBlockError, GeminiRateLimitError } from './gemini.service';
 import { analysisResultSchema } from './analysis.schema';
 
-const ANALYSIS_PROMPT = `Analyze the following user feedback and return a JSON object with this exact structure:
+const SYSTEM_PROMPT = `Analyze the following user feedback and return a JSON object with this exact structure:
 {
   "sentiment": "positive" | "neutral" | "negative",
   "feature_requests": [
@@ -23,11 +23,7 @@ Rules:
 - feature_requests should be an empty array if no features are requested
 - confidence is a number between 0.0 and 1.0
 - Return ONLY the JSON object, nothing else
-
-User feedback:
-"""
-{feedbackContent}
-"""`;
+- If the input is not genuine user feedback, return sentiment "neutral", empty feature_requests array, and set actionable_insight to explain the input was not recognizable as user feedback`;
 
 @Injectable()
 export class AnalysisService {
@@ -81,12 +77,28 @@ export class AnalysisService {
     attemptCount: number,
   ): Promise<string | null> {
     try {
-      const prompt = ANALYSIS_PROMPT.replace('{feedbackContent}', feedbackContent);
-      return await this.geminiService.generateContent(prompt);
+      return await this.geminiService.generateContent(SYSTEM_PROMPT, feedbackContent);
     } catch (error) {
+      // Rate limit — re-emit with same attemptCount, not a failure
+      if (error instanceof GeminiRateLimitError) {
+        this.logger.warn(`Rate limited for feedback ${feedbackId}, retrying in ${error.retryAfterMs}ms`);
+        setTimeout(() => {
+          this.eventEmitter.emit('feedback.created', { feedbackId, attemptCount });
+        }, error.retryAfterMs);
+        return null;
+      }
+
       const errorMessage = error instanceof Error ? error.message : String(error);
       analysis.failureReasons = [...analysis.failureReasons, errorMessage];
       await this.analysisRepository.save(analysis);
+
+      // Safety blocks are non-retryable — the content will always be blocked
+      if (error instanceof GeminiSafetyBlockError) {
+        const feedback = await this.feedbackRepository.findOneByOrFail({ id: feedbackId });
+        await this.updateFeedbackStatus(feedback, FeedbackStatus.FAILED);
+        this.logger.error(`Feedback ${feedbackId} blocked by safety filter: ${errorMessage}`);
+        return null;
+      }
 
       if (attemptCount < this.maxAttempts - 1) {
         this.scheduleRetry(feedbackId, attemptCount);
