@@ -15,12 +15,13 @@ export class FeedbackService {
   async submitFeedback(content: string): Promise<Feedback> {
     const feedback = this.feedbackRepository.create({ content });
     const savedFeedback = await this.feedbackRepository.save(feedback);
-    this.eventEmitter.emit('feedback.created', { feedbackId: savedFeedback.id });
+    this.eventEmitter.emit('feedback.created', { feedbackId: savedFeedback.id, attemptCount: 0 });
     return savedFeedback;
   }
 
   async listFeedback(): Promise<Feedback[]> {
     return this.feedbackRepository.find({
+      relations: { analysis: true },
       order: { createdAt: 'DESC' },
     });
   }

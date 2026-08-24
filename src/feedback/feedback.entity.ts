@@ -4,7 +4,9 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  OneToOne,
 } from 'typeorm';
+import { Analysis } from '../analysis/analysis.entity';
 
 export enum FeedbackStatus {
   RECEIVED = 'RECEIVED',
@@ -23,6 +25,9 @@ export class Feedback {
 
   @Column({ type: 'text', default: FeedbackStatus.RECEIVED })
   status!: FeedbackStatus;
+
+  @OneToOne(() => Analysis, (analysis) => analysis.feedback)
+  analysis!: Analysis | null;
 
   @CreateDateColumn()
   createdAt!: Date;

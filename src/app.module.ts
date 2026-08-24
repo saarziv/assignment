@@ -5,6 +5,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { FeedbackModule } from './feedback/feedback.module';
 import { AnalysisModule } from './analysis/analysis.module';
 import { Feedback } from './feedback/feedback.entity';
+import { Analysis } from './analysis/analysis.entity';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { Feedback } from './feedback/feedback.entity';
     TypeOrmModule.forRoot({
       type: 'better-sqlite3',
       database: 'feedback.db',
-      entities: [Feedback],
+      entities: [Feedback, Analysis],
       synchronize: true,
     }),
     FeedbackModule,

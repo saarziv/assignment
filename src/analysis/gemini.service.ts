@@ -23,7 +23,7 @@ export class GeminiService {
       throw new Error('GEMINI_API_KEY is not configured');
     }
     this.apiKey = apiKey;
-    this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`;
+    this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
   }
 
   async generateContent(prompt: string): Promise<string> {
