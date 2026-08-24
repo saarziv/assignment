@@ -32,6 +32,15 @@ USE_MOCK_LLM=true npm run dev
 # GET  http://localhost:3000/feedback
 ```
 
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/feedback` | Submit feedback for async AI analysis. Body: `{ "content": "..." }` |
+| `GET` | `/feedback` | List all feedback with status and analysis results |
+
+Swagger UI available at **http://localhost:3000/api** when the server is running.
+
 ## Architecture
 
 ```
