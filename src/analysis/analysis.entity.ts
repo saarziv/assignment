@@ -21,9 +21,8 @@ export class Analysis {
   @Column({ type: 'text' })
   feedbackId!: string;
 
-  // Raw string responses from each attempt, for debuggability
-  @Column({ type: 'simple-json' })
-  rawAiResponses!: string[];
+  @Column({ type: 'text', nullable: true })
+  rawAiResponse!: string | null;
 
   // Validated structured result — null until analysis succeeds
   @Column({ type: 'simple-json', nullable: true })

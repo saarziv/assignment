@@ -1,6 +1,6 @@
 import { AnalysisService } from './analysis.service';
 import { GeminiService } from './gemini.service';
-import { FeedbackStatus } from '../feedback/feedback.entity';
+import { Feedback, FeedbackStatus } from '../feedback/feedback.entity';
 
 const VALID_RESPONSE = JSON.stringify({
   sentiment: 'positive',
@@ -17,9 +17,11 @@ const INVALID_SCHEMA_RESPONSE = JSON.stringify({
 describe('AnalysisService', () => {
   let service: AnalysisService;
   let mockGeminiService: { generateContent: jest.Mock };
+  let mockFeedback: Feedback;
   let mockFeedbackRepo: {
     findOneBy: jest.Mock;
-    update: jest.Mock;
+    findOneByOrFail: jest.Mock;
+    save: jest.Mock;
   };
   let mockAnalysisRepo: {
     findOneBy: jest.Mock;
@@ -27,17 +29,26 @@ describe('AnalysisService', () => {
     save: jest.Mock;
   };
   let mockEventEmitter: { emit: jest.Mock };
-  let savedAnalysis: { rawAiResponses: string[]; failureReasons: string[]; analysisResult: unknown };
+  let mockConfigService: { get: jest.Mock };
+  let savedAnalysis: { rawAiResponse: string | null; failureReasons: string[]; analysisResult: unknown };
+  let feedbackStatusHistory: FeedbackStatus[];
 
   beforeEach(() => {
     jest.useFakeTimers();
 
-    savedAnalysis = { rawAiResponses: [], failureReasons: [], analysisResult: null };
+    savedAnalysis = { rawAiResponse: null, failureReasons: [], analysisResult: null };
+    feedbackStatusHistory = [];
+
+    mockFeedback = { id: 'fb-1', content: 'Great app!', status: FeedbackStatus.RECEIVED } as Feedback;
 
     mockGeminiService = { generateContent: jest.fn() };
     mockFeedbackRepo = {
-      findOneBy: jest.fn().mockResolvedValue({ id: 'fb-1', content: 'Great app!' }),
-      update: jest.fn().mockResolvedValue(undefined),
+      findOneBy: jest.fn().mockResolvedValue(mockFeedback),
+      findOneByOrFail: jest.fn().mockResolvedValue(mockFeedback),
+      save: jest.fn().mockImplementation((feedback: Feedback) => {
+        feedbackStatusHistory.push(feedback.status);
+        return Promise.resolve(feedback);
+      }),
     };
     mockAnalysisRepo = {
       findOneBy: jest.fn().mockResolvedValue(null),
@@ -51,12 +62,16 @@ describe('AnalysisService', () => {
       }),
     };
     mockEventEmitter = { emit: jest.fn() };
+    mockConfigService = {
+      get: jest.fn().mockImplementation((key: string, defaultValue: number) => defaultValue),
+    };
 
     service = new AnalysisService(
       mockFeedbackRepo as never,
       mockAnalysisRepo as never,
       mockGeminiService as never,
       mockEventEmitter as never,
+      mockConfigService as never,
     );
   });
 
@@ -69,15 +84,14 @@ describe('AnalysisService', () => {
 
     await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 0 });
 
-    expect(mockFeedbackRepo.update).toHaveBeenCalledWith('fb-1', { status: FeedbackStatus.ANALYZING });
+    expect(feedbackStatusHistory).toEqual([FeedbackStatus.ANALYZING, FeedbackStatus.DONE]);
     expect(mockAnalysisRepo.save).toHaveBeenCalled();
-    expect(savedAnalysis.rawAiResponses).toContain(VALID_RESPONSE);
+    expect(savedAnalysis.rawAiResponse).toBe(VALID_RESPONSE);
     expect(savedAnalysis.analysisResult).toEqual({
       sentiment: 'positive',
       feature_requests: [{ title: 'Dark mode', confidence: 0.9 }],
       actionable_insight: 'User loves the product but wants dark mode',
     });
-    expect(mockFeedbackRepo.update).toHaveBeenCalledWith('fb-1', { status: FeedbackStatus.DONE });
   });
 
   it('should fail immediately on invalid JSON without retry', async () => {
@@ -85,11 +99,10 @@ describe('AnalysisService', () => {
 
     await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 0 });
 
-    expect(mockFeedbackRepo.update).toHaveBeenCalledWith('fb-1', { status: FeedbackStatus.FAILED });
+    expect(feedbackStatusHistory).toContain(FeedbackStatus.FAILED);
     expect(savedAnalysis.failureReasons).toEqual(
       expect.arrayContaining([expect.stringContaining('not valid JSON')]),
     );
-    // No retry emitted
     expect(mockEventEmitter.emit).not.toHaveBeenCalled();
   });
 
@@ -98,7 +111,7 @@ describe('AnalysisService', () => {
 
     await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 0 });
 
-    expect(mockFeedbackRepo.update).toHaveBeenCalledWith('fb-1', { status: FeedbackStatus.FAILED });
+    expect(feedbackStatusHistory).toContain(FeedbackStatus.FAILED);
     expect(savedAnalysis.failureReasons).toEqual(
       expect.arrayContaining([expect.stringContaining('Schema validation failed')]),
     );
@@ -111,17 +124,16 @@ describe('AnalysisService', () => {
     // Attempt 0
     await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 0 });
     expect(savedAnalysis.failureReasons).toHaveLength(1);
-    expect(mockFeedbackRepo.update).not.toHaveBeenCalledWith('fb-1', { status: FeedbackStatus.FAILED });
+    expect(feedbackStatusHistory).not.toContain(FeedbackStatus.FAILED);
 
-    // setTimeout was scheduled — advance timer to trigger it
+    // setTimeout scheduled — advance timer
     jest.advanceTimersByTime(1000);
     expect(mockEventEmitter.emit).toHaveBeenCalledWith('feedback.created', {
       feedbackId: 'fb-1',
       attemptCount: 1,
     });
 
-    // Attempt 1 — simulate the re-emitted event
-    // Return existing analysis for subsequent attempts
+    // Attempt 1
     mockAnalysisRepo.findOneBy.mockResolvedValue(savedAnalysis);
     await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 1 });
     expect(savedAnalysis.failureReasons).toHaveLength(2);
@@ -135,7 +147,7 @@ describe('AnalysisService', () => {
     // Attempt 2 — max reached
     await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 2 });
     expect(savedAnalysis.failureReasons).toHaveLength(3);
-    expect(mockFeedbackRepo.update).toHaveBeenCalledWith('fb-1', { status: FeedbackStatus.FAILED });
+    expect(feedbackStatusHistory).toContain(FeedbackStatus.FAILED);
   });
 
   it('should recover on retry after HTTP error', async () => {
@@ -158,8 +170,8 @@ describe('AnalysisService', () => {
     await service.handleFeedbackCreated({ feedbackId: 'fb-1', attemptCount: 1 });
 
     expect(savedAnalysis.analysisResult).toBeTruthy();
-    expect(savedAnalysis.rawAiResponses).toHaveLength(1);
-    expect(savedAnalysis.failureReasons).toHaveLength(1); // still has the first error
-    expect(mockFeedbackRepo.update).toHaveBeenCalledWith('fb-1', { status: FeedbackStatus.DONE });
+    expect(savedAnalysis.rawAiResponse).toBe(VALID_RESPONSE);
+    expect(savedAnalysis.failureReasons).toHaveLength(1);
+    expect(feedbackStatusHistory).toContain(FeedbackStatus.DONE);
   });
 });

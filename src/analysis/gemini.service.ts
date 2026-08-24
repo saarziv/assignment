@@ -16,17 +16,25 @@ export class GeminiService {
   private readonly logger = new Logger(GeminiService.name);
   private readonly apiKey: string;
   private readonly apiUrl: string;
+  private readonly useMock: boolean;
+  private mockCallCount = 0;
 
   constructor(private readonly configService: ConfigService) {
+    this.useMock = this.configService.get<string>('USE_MOCK_LLM') === 'true';
+
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
-    if (!apiKey) {
+    if (!apiKey && !this.useMock) {
       throw new Error('GEMINI_API_KEY is not configured');
     }
-    this.apiKey = apiKey;
+    this.apiKey = apiKey ?? '';
     this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
   }
 
   async generateContent(prompt: string): Promise<string> {
+    if (this.useMock) {
+      return this.mockGenerateContent();
+    }
+
     const response = await fetch(this.apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -53,5 +61,23 @@ export class GeminiService {
     }
 
     return text;
+  }
+
+  private mockGenerateContent(): string {
+    this.mockCallCount++;
+    this.logger.warn(`[MOCK] Call #${this.mockCallCount}`);
+
+    if (this.mockCallCount <= 2) {
+      throw new Error(`Gemini API error (503): Service Unavailable (mock attempt ${this.mockCallCount})`);
+    }
+
+    return JSON.stringify({
+      sentiment: 'positive',
+      feature_requests: [
+        { title: 'Dark mode support', confidence: 0.95 },
+        { title: 'Faster search', confidence: 0.7 },
+      ],
+      actionable_insight: 'User is satisfied overall but has clear feature requests worth prioritizing.',
+    });
   }
 }
